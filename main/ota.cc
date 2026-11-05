@@ -190,10 +190,9 @@ esp_err_t Ota::CheckVersion() {
             struct timeval tv;
             double ts = timestamp->valuedouble;
             
-            // 如果有时区偏移，计算本地时间
-            if (cJSON_IsNumber(timezone_offset)) {
-                ts += (timezone_offset->valueint * 60 * 1000); // 转换分钟为毫秒
-            }
+            // timestamp 本身就是 UTC 毫秒时间戳，不能再叠加 timezone_offset，
+            // 否则系统时间会变成"本地时间"，显示时再套一次时区就会快出整整一个时区。
+            (void)timezone_offset;
             
             tv.tv_sec = (time_t)(ts / 1000);  // 转换毫秒为秒
             tv.tv_usec = (suseconds_t)((long long)ts % 1000) * 1000;  // 剩余的毫秒转换为微秒
