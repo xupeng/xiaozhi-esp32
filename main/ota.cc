@@ -119,19 +119,13 @@ esp_err_t Ota::CheckVersion() {
         return ESP_ERR_INVALID_RESPONSE;
     }
 
-    has_activation_code_ = false;
+    requires_app_binding_ = false;
     has_activation_challenge_ = false;
     cJSON *activation = cJSON_GetObjectItem(root, "activation");
     if (cJSON_IsObject(activation)) {
-        cJSON* message = cJSON_GetObjectItem(activation, "message");
-        if (cJSON_IsString(message)) {
-            activation_message_ = message->valuestring;
-        }
-        cJSON* code = cJSON_GetObjectItem(activation, "code");
-        if (cJSON_IsString(code)) {
-            activation_code_ = code->valuestring;
-            has_activation_code_ = true;
-        }
+        // A manual activation response must be completed in StackChan World.
+        // Discard community activation codes and server-provided URL messages.
+        requires_app_binding_ = cJSON_IsString(cJSON_GetObjectItem(activation, "code"));
         cJSON* challenge = cJSON_GetObjectItem(activation, "challenge");
         if (cJSON_IsString(challenge)) {
             activation_challenge_ = challenge->valuestring;
