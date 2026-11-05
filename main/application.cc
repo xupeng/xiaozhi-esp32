@@ -86,6 +86,21 @@ void Application::Initialize() {
     };
     audio_service_.SetCallbacks(callbacks);
 
+    // Head tap barge-in: tapping the head while a reply plays stops it immediately.
+    if (!head_tap_hooked_) {
+        head_tap_hooked_ = true;
+        GetHAL().onHeadPetGesture.connect([this](HeadPetGesture gesture) {
+            if (gesture != HeadPetGesture::Press) {
+                return;
+            }
+            Schedule([this]() {
+                // 摸头同时也停止正在跳的舞（舞蹈不依赖对话状态）
+                hal_agent_stop_dance();
+                InterruptSpeaking();
+            });
+        });
+    }
+
     // Add state change listeners
     state_machine_.AddStateChangeListener([this](DeviceState old_state, DeviceState new_state) {
         xEventGroupSetBits(event_group_, MAIN_EVENT_STATE_CHANGED);
