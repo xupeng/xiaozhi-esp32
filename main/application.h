@@ -86,6 +86,12 @@ public:
     void AbortSpeaking(AbortReason reason);
 
     /**
+     * Interrupt the current spoken reply (barge-in).
+     * Drops buffered playback, tells the server to abort, and returns to listening.
+     */
+    void InterruptSpeaking(AbortReason reason = kAbortReasonNone, bool play_popup = false);
+
+    /**
      * Toggle chat state (event-based, thread-safe)
      * Sends MAIN_EVENT_TOGGLE_CHAT to be handled in Run()
      */

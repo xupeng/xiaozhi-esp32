@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <deque>
+#include <atomic>
 #include <condition_variable>
 #include <chrono>
 #include <mutex>
@@ -93,6 +94,9 @@ struct AudioTask {
     AudioTaskType type;
     std::vector<int16_t> pcm;
     uint32_t timestamp;
+    // Playback generation this task belongs to; bumped on ResetDecoder() so
+    // tasks already dequeued for an aborted reply are not played or re-queued.
+    uint32_t generation = 0;
 };
 
 struct DebugStatistics {
@@ -171,6 +175,8 @@ private:
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_testing_queue_;
     std::deque<std::unique_ptr<AudioTask>> audio_encode_queue_;
     std::deque<std::unique_ptr<AudioTask>> audio_playback_queue_;
+    // Bumped by ResetDecoder(); audio tasks from an older generation are dropped.
+    std::atomic<uint32_t> playback_generation_{0};
     // For server AEC
     std::deque<uint32_t> timestamp_queue_;
 

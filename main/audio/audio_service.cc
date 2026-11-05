@@ -300,6 +300,11 @@ void AudioService::AudioOutputTask() {
         audio_queue_cv_.notify_all();
         lock.unlock();
 
+        // Reply was aborted after this task was dequeued; drop it.
+        if (task->generation != playback_generation_.load()) {
+            continue;
+        }
+
         if (!codec_->output_enabled()) {
             esp_timer_stop(audio_power_timer_);
             esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
@@ -343,9 +348,14 @@ void AudioService::OpusCodecTask() {
             audio_queue_cv_.notify_all();
             lock.unlock();
 
+            // Generation captured before decoding; an interrupt during decode must
+            // prevent this old packet from being re-queued for playback.
+            const uint32_t generation = playback_generation_.load();
+
             auto task = std::make_unique<AudioTask>();
             task->type = kAudioTaskTypeDecodeToPlaybackQueue;
             task->timestamp = packet->timestamp;
+            task->generation = generation;
 
             SetDecodeSampleRate(packet->sample_rate, packet->frame_duration);
             if (opus_decoder_ != nullptr) {
@@ -378,9 +388,11 @@ void AudioService::OpusCodecTask() {
                         task->pcm = std::move(resampled);
                     }
                     lock.lock();
-                    audio_playback_queue_.push_back(std::move(task));
-                    audio_queue_cv_.notify_all();
-                    debug_statistics_.decode_count++;
+                    if (generation == playback_generation_.load()) {
+                        audio_playback_queue_.push_back(std::move(task));
+                        audio_queue_cv_.notify_all();
+                        debug_statistics_.decode_count++;
+                    }
                 } else {
                     ESP_LOGE(TAG, "Failed to decode audio after resize, error code: %d", ret);
                     lock.lock();
@@ -666,6 +678,9 @@ void AudioService::WaitForPlaybackQueueEmpty() {
 }
 
 void AudioService::ResetDecoder() {
+    // Invalidate audio tasks already dequeued by the decode/output tasks so an
+    // aborted reply cannot resume playing or re-enter the playback queue.
+    playback_generation_.fetch_add(1);
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
     std::unique_lock<std::mutex> decoder_lock(decoder_mutex_);
     if (opus_decoder_ != nullptr) {

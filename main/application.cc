@@ -501,7 +501,7 @@ void Application::InitializeProtocol() {
     });
     
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
-        if (GetDeviceState() == kDeviceStateSpeaking) {
+        if (GetDeviceState() == kDeviceStateSpeaking && !aborted_) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
     });
@@ -534,9 +534,17 @@ void Application::InitializeProtocol() {
                     SetDeviceState(kDeviceStateSpeaking);
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
-                Schedule([this]() {
+                // "interrupt": the user started talking, so drop buffered audio of
+                // the aborted reply immediately instead of playing it out.
+                auto reason = cJSON_GetObjectItem(root, "reason");
+                bool interrupted = cJSON_IsString(reason) &&
+                    strcmp(reason->valuestring, "interrupt") == 0;
+                Schedule([this, interrupted]() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
+                        if (interrupted && listening_mode_ != kListeningModeManualStop) {
+                            audio_service_.ResetDecoder();
+                            SetDeviceState(kDeviceStateListening);
+                        } else if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
                             SetDeviceState(kDeviceStateListening);
@@ -778,6 +786,11 @@ void Application::HandleWakeWordDetectedEvent() {
         // Channel already opened, continue directly
         ContinueWakeWordInvoke(wake_word);
     } else if (state == kDeviceStateSpeaking || state == kDeviceStateListening) {
+        if (state == kDeviceStateSpeaking) {
+            // Speaking: stop playback locally and resume listening right away.
+            InterruptSpeaking(kAbortReasonWakeWordDetected, true);
+            return;
+        }
         AbortSpeaking(kAbortReasonWakeWordDetected);
         // Clear send queue to avoid sending residues to server
         while (audio_service_.PopPacketFromSendQueue());
@@ -896,8 +909,8 @@ void Application::HandleStateChangedEvent() {
 
             if (listening_mode_ != kListeningModeRealtime) {
                 audio_service_.EnableVoiceProcessing(false);
-                // Only AFE wake word can be detected in speaking mode
-                audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
+                // 播报时不监听唤醒词：语音打断已取消，改用摸头/点屏幕打断。
+                audio_service_.EnableWakeWordDetection(false);
             }
             audio_service_.ResetDecoder();
             break;
@@ -925,6 +938,22 @@ void Application::AbortSpeaking(AbortReason reason) {
     if (protocol_) {
         protocol_->SendAbortSpeaking(reason);
     }
+}
+
+void Application::InterruptSpeaking(AbortReason reason, bool play_popup) {
+    if (GetDeviceState() != kDeviceStateSpeaking || protocol_ == nullptr) {
+        return;
+    }
+    ESP_LOGI(TAG, "Interrupt speaking (barge-in)");
+    // Stop locally first: mark the reply aborted so late packets are dropped,
+    // tell the server to abort, and leave Speaking (which clears playback).
+    aborted_ = true;
+    protocol_->SendAbortSpeaking(reason);
+    // Do not send microphone residue captured before the interrupt.
+    while (audio_service_.PopPacketFromSendQueue()) {
+    }
+    play_popup_on_listening_ = play_popup;
+    SetListeningMode(GetDefaultListeningMode());
 }
 
 void Application::SetListeningMode(ListeningMode mode) {
