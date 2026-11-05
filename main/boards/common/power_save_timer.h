@@ -11,6 +11,10 @@ public:
     ~PowerSaveTimer();
 
     void SetEnabled(bool enabled);
+    // 运行时调整自动关机时间（-1 表示不关机），用于按供电状态区分策略
+    void SetShutdownSeconds(int seconds) { seconds_to_shutdown_ = seconds; }
+    // 运行时调整自动息屏秒数（-1 表示不息屏），用于插电时保持常显
+    void SetSleepSeconds(int seconds) { seconds_to_sleep_ = seconds; }
     void OnEnterSleepMode(std::function<void()> callback);
     void OnExitSleepMode(std::function<void()> callback);
     void OnShutdownRequest(std::function<void()> callback);
